@@ -133,7 +133,6 @@ class OCCMexicoScraper:
         """Fetch OCC.com.mx internship positions"""
         jobs = []
         try:
-            # Search for becarios/interns in Mexico City
             url = "https://www.occ.com.mx/empleos/de-becario/en-ciudad-de-mexico/"
             
             headers = {
@@ -145,7 +144,6 @@ class OCCMexicoScraper:
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Find job listings
             job_cards = soup.find_all('a', class_='jobCard')
             
             if not job_cards:
@@ -199,7 +197,6 @@ class IndeedScraper:
         """Fetch Indeed jobs for interns in Mexico City"""
         jobs = []
         try:
-            # Indeed search URL for interns in Mexico
             base_url = "https://mx.indeed.com/jobs"
             params = {
                 'q': 'becario OR intern OR practicante',
@@ -216,26 +213,21 @@ class IndeedScraper:
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Find job listings
             job_cards = soup.find_all('div', class_='resultContent')
             
             for card in job_cards[:20]:
                 try:
-                    # Title
                     title_elem = card.find('h2', class_='jobTitle')
                     title = title_elem.get_text(strip=True) if title_elem else ''
                     
-                    # URL
                     link = card.find('a', class_='jcs-JobTitle')
                     job_url = link.get('href', '') if link else ''
                     if job_url and not job_url.startswith('http'):
                         job_url = 'https://mx.indeed.com' + job_url
                     
-                    # Company
                     company_elem = card.find('span', class_='companyName')
                     company = company_elem.get_text(strip=True) if company_elem else ''
                     
-                    # Location
                     location_elem = card.find('span', class_='companyLocation')
                     location = location_elem.get_text(strip=True) if location_elem else 'Mexico City'
                     
@@ -268,7 +260,6 @@ class LinkedInScraper:
         """Fetch LinkedIn internship positions in Mexico"""
         jobs = []
         try:
-            # LinkedIn jobs search URL
             url = "https://www.linkedin.com/jobs/search/"
             params = {
                 'keywords': 'internship AND (mexico OR CDMX)',
@@ -285,24 +276,19 @@ class LinkedInScraper:
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Find job cards
             job_cards = soup.find_all('div', class_='base-search-card')
             
             for card in job_cards[:20]:
                 try:
-                    # Title
                     title_elem = card.find('h3', class_='base-search-card__title')
                     title = title_elem.get_text(strip=True) if title_elem else ''
                     
-                    # Company
                     company_elem = card.find('h4', class_='base-search-card__subtitle')
                     company = company_elem.get_text(strip=True) if company_elem else ''
                     
-                    # URL
                     link = card.find('a', class_='base-card__full-link')
                     job_url = link.get('href', '') if link else ''
                     
-                    # Location
                     location_elem = card.find('span', class_='base-search-card__location')
                     location = location_elem.get_text(strip=True) if location_elem else 'Mexico'
                     
@@ -335,7 +321,6 @@ class ComputrabajoScraper:
         """Fetch Computrabajo tech internships in Mexico"""
         jobs = []
         try:
-            # Computrabajo search URL
             url = "https://www.computrabajo.com.mx/search/empleos"
             params = {
                 'q': 'becario OR intern',
@@ -351,20 +336,16 @@ class ComputrabajoScraper:
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Find job listings
             job_cards = soup.find_all('div', class_='search-result-item')
             
             for card in job_cards[:20]:
                 try:
-                    # Title
                     title_elem = card.find('h2', class_='job-title')
                     title = title_elem.get_text(strip=True) if title_elem else ''
                     
-                    # Company
                     company_elem = card.find('span', class_='company-name')
                     company = company_elem.get_text(strip=True) if company_elem else ''
                     
-                    # URL
                     link = card.find('a', class_='job-link')
                     job_url = link.get('href', '') if link else ''
                     if job_url and not job_url.startswith('http'):
@@ -401,7 +382,6 @@ class HirelineScraper:
         """Fetch Hireline internship positions"""
         jobs = []
         try:
-            # Hireline search
             url = "https://hireline.io/jobs"
             params = {
                 'search': 'intern OR becario',
@@ -417,20 +397,16 @@ class HirelineScraper:
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Find job listings
             job_cards = soup.find_all('div', class_='job-card')
             
             for card in job_cards[:20]:
                 try:
-                    # Title
                     title_elem = card.find('h3')
                     title = title_elem.get_text(strip=True) if title_elem else ''
                     
-                    # Company
                     company_elem = card.find('p', class_='company')
                     company = company_elem.get_text(strip=True) if company_elem else ''
                     
-                    # URL
                     link = card.find('a')
                     job_url = link.get('href', '') if link else ''
                     if job_url and not job_url.startswith('http'):
@@ -472,29 +448,67 @@ class JobAggregator:
         self.db = JobDatabase()
     
     def filter_jobs(self, jobs: List[Dict]) -> List[Dict]:
-        """Filter jobs based on criteria"""
-        keywords = [
-            'intern', 'becario', 'practicante',
-            'network', 'cisco', 'meraki', 'ericsson', 
-            'dahua', 'hikvision', 'totalplay', 'at&t',
-            'engineer', 'support', 'analyst', 'specialist',
-            'systems', 'admin', 'security'
+        """Filter jobs for Brando Cervantes - Telematics Engineering Profile"""
+        
+        # Keywords for Telematics/Network/Security/Cloud/SOC
+        tech_keywords = [
+            # Job types
+            'intern', 'becario', 'practicante', 'pasante', 'trainee',
+            
+            # Core telematics
+            'network', 'networking', 'redes', 'cybersecurity', 'security', 
+            'seguridad', 'cloud', 'aws', 'azure', 'gcp', 'soc', 'analyst',
+            'database', 'sql', 'postgres', 'devops', 'infrastructure',
+            
+            # Companies of interest
+            'cisco', 'meraki', 'ericsson', 'dahua', 'hikvision', 'totalplay',
+            'at&t', 'axtel', 'genetec', 'ntt', 'ibm', 'oracle', 'huawei', 'zte',
+            
+            # Engineering roles
+            'engineer', 'ingeniero', 'support', 'soporte', 'specialist',
+            'especialista', 'técnico', 'admin', 'administrator', 'system',
+            
+            # Development
+            'software', 'developer', 'programador', 'backend', 'frontend',
+            'python', 'java', 'c++', 'go', 'rust',
+            
+            # Tech skills
+            'linux', 'windows', 'wireshark', 'firewall', 'router', 'vpn',
+            'encryption', 'api', 'rest', 'docker', 'kubernetes', 'git'
         ]
         
-        locations = ['cdmx', 'mexico city', 'miguel hidalgo', 'polanco', 'mexico']
+        locations = [
+            'cdmx', 'mexico city', 'ciudad de méxico', 'miguel hidalgo',
+            'polanco', 'benito juarez', 'cuauhtemoc', 'anzures', 'granada',
+            'mexico'
+        ]
+        
+        exclude_keywords = [
+            'sales', 'ventas', 'marketing', 'hr', 'rrhh',
+            'legal', 'abogado', 'contador'
+        ]
         
         filtered = []
         for job in jobs:
             title = job.get('title', '').lower()
             location = job.get('location', '').lower()
             company = job.get('company', '').lower()
+            description = job.get('description', '').lower()
+            full_text = f"{title} {company} {description}"
             
-            # Check keywords
-            has_keyword = any(kw in title or kw in company for kw in keywords)
-            # Check location
+            # Check location match
             has_location = any(loc in location for loc in locations)
+            if not has_location:
+                continue
             
-            if has_keyword and has_location:
+            # Check for excluded keywords
+            if any(excl in full_text for excl in exclude_keywords):
+                continue
+            
+            # Check for tech keywords (at least one match)
+            has_tech = any(kw in full_text for kw in tech_keywords)
+            
+            if has_tech:
                 filtered.append(job)
         
         return filtered
