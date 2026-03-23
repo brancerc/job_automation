@@ -18,20 +18,7 @@ async def main():
     logger.info("🚀 JOB AUTOMATION WORKFLOW STARTED")
     logger.info("=" * 60)
     
-    # Step 1: Scrape jobs from all sources
-    logger.info("\n📡 STEP 1: Scraping jobs from all sources...")
-    aggregator = JobAggregator()
-    new_jobs = aggregator.scrape_all()
-    
-    if not new_jobs:
-        logger.info("✅ No new jobs found. Everything up to date!")
-        return
-    
-    logger.info(f"\n✅ Found {len(new_jobs)} new job(s)")
-    
-    # Step 2: Send Telegram notifications
-    logger.info("\n📱 STEP 2: Sending Telegram notifications...")
-    
+    # Initialize Telegram notifier first
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
     chat_id = os.getenv('TELEGRAM_CHAT_ID')
     
@@ -41,6 +28,42 @@ async def main():
         return
     
     notifier = JobTelegramNotifier(bot_token, chat_id)
+    
+    # Send startup message
+    logger.info("\n📱 STEP 0: Sending startup notification...")
+    startup_msg = "🤖 <b>Job Automation Bot Started</b>\n\n⏱️ Scanning for new opportunities...\n\nStand by for results!"
+    try:
+        await notifier.bot.send_message(
+            chat_id=chat_id,
+            text=startup_msg,
+            parse_mode='HTML'
+        )
+        logger.info("✅ Startup notification sent")
+    except Exception as e:
+        logger.error(f"⚠️ Could not send startup notification: {e}")
+    
+    # Step 1: Scrape jobs from all sources
+    logger.info("\n📡 STEP 1: Scraping jobs from all sources...")
+    aggregator = JobAggregator()
+    new_jobs = aggregator.scrape_all()
+    
+    if not new_jobs:
+        logger.info("✅ No new jobs found. Everything up to date!")
+        try:
+            await notifier.bot.send_message(
+                chat_id=chat_id,
+                text="✅ <b>Scan Complete</b>\n\nNo new opportunities at this time.\n\nKeep checking back!",
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logger.error(f"⚠️ Could not send completion message: {e}")
+        return
+    
+    logger.info(f"\n✅ Found {len(new_jobs)} new job(s)")
+    
+    # Step 2: Send Telegram notifications
+    logger.info("\n📱 STEP 2: Sending Telegram notifications...")
+    
     sent_count = await notifier.send_notifications_batch(new_jobs)
     
     # Step 3: Mark jobs as notified
