@@ -53,8 +53,6 @@ class JobDatabase:
         """Add job to database, return True if new"""
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
-        
-        # Generate unique ID from URL hash
         job_id = hashlib.md5(job['url'].encode()).hexdigest()
         
         try:
@@ -81,14 +79,14 @@ class JobDatabase:
             return True
         except sqlite3.IntegrityError:
             conn.close()
-            logger.debug(f"Job already exists: {job['url']}")
+            logger.debug(f"Duplicate job (already in DB): {job['url']}")
             return False
         except Exception as e:
             logger.error(f"Error adding job: {e}")
             conn.close()
             return False
     
-    def get_new_jobs(self, limit=10) -> List[Dict]:
+    def get_new_jobs(self, limit=20) -> List[Dict]:
         """Get jobs not yet notified"""
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
@@ -124,312 +122,89 @@ class JobDatabase:
         c.execute('UPDATE jobs SET notified = 1 WHERE id = ?', (job_id,))
         conn.commit()
         conn.close()
-
-
-class OCCMexicoScraper:
-    """Scrape OCC.com.mx for internships in Mexico"""
     
-    def scrape(self) -> List[Dict]:
-        """Fetch OCC.com.mx internship positions"""
-        jobs = []
-        try:
-            url = "https://www.occ.com.mx/empleos/de-becario/en-ciudad-de-mexico/"
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            job_cards = soup.find_all('a', class_='jobCard')
-            
-            if not job_cards:
-                job_cards = soup.find_all('div', class_='jobPosting')
-            
-            for card in job_cards[:20]:
-                try:
-                    title = card.get('aria-label', '')
-                    if not title:
-                        title_elem = card.find('h2')
-                        if title_elem:
-                            title = title_elem.get_text(strip=True)
-                    
-                    job_url = card.get('href', '')
-                    if not job_url.startswith('http'):
-                        job_url = 'https://www.occ.com.mx' + job_url
-                    
-                    company = ''
-                    company_elem = card.find('span', class_='company')
-                    if company_elem:
-                        company = company_elem.get_text(strip=True)
-                    
-                    location = 'Mexico City'
-                    
-                    if title and job_url:
-                        jobs.append({
-                            'title': title,
-                            'company': company or 'OCC',
-                            'url': job_url,
-                            'location': location,
-                            'type': 'Becario',
-                            'posted_date': '',
-                            'description': '',
-                            'source': 'OCC.com.mx'
-                        })
-                except Exception as e:
-                    logger.debug(f"Error parsing OCC job: {e}")
-                    continue
-            
-            logger.info(f"OCC scraper found {len(jobs)} jobs")
-        except Exception as e:
-            logger.error(f"OCC scraper error: {e}")
-        
-        return jobs
-
-
-class IndeedScraper:
-    """Scrape Indeed.com.mx for jobs"""
-    
-    def scrape(self) -> List[Dict]:
-        """Fetch Indeed jobs for interns in Mexico City"""
-        jobs = []
-        try:
-            base_url = "https://mx.indeed.com/jobs"
-            params = {
-                'q': 'becario OR intern OR practicante',
-                'l': 'Mexico City',
-                'sort': 'date'
-            }
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(base_url, params=params, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            job_cards = soup.find_all('div', class_='resultContent')
-            
-            for card in job_cards[:20]:
-                try:
-                    title_elem = card.find('h2', class_='jobTitle')
-                    title = title_elem.get_text(strip=True) if title_elem else ''
-                    
-                    link = card.find('a', class_='jcs-JobTitle')
-                    job_url = link.get('href', '') if link else ''
-                    if job_url and not job_url.startswith('http'):
-                        job_url = 'https://mx.indeed.com' + job_url
-                    
-                    company_elem = card.find('span', class_='companyName')
-                    company = company_elem.get_text(strip=True) if company_elem else ''
-                    
-                    location_elem = card.find('span', class_='companyLocation')
-                    location = location_elem.get_text(strip=True) if location_elem else 'Mexico City'
-                    
-                    if title and job_url:
-                        jobs.append({
-                            'title': title,
-                            'company': company,
-                            'url': job_url,
-                            'location': location,
-                            'type': 'Internship',
-                            'posted_date': '',
-                            'description': '',
-                            'source': 'Indeed.com.mx'
-                        })
-                except Exception as e:
-                    logger.debug(f"Error parsing Indeed job: {e}")
-                    continue
-            
-            logger.info(f"Indeed scraper found {len(jobs)} jobs")
-        except Exception as e:
-            logger.error(f"Indeed scraper error: {e}")
-        
-        return jobs
+    def get_stats(self) -> Dict:
+        """Get database statistics"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM jobs')
+        total = c.fetchone()[0]
+        c.execute('SELECT COUNT(*) FROM jobs WHERE notified = 1')
+        notified = c.fetchone()[0]
+        c.execute('SELECT COUNT(*) FROM jobs WHERE notified = 0')
+        pending = c.fetchone()[0]
+        conn.close()
+        return {'total': total, 'notified': notified, 'pending': pending}
 
 
 class LinkedInScraper:
-    """Scrape LinkedIn job listings"""
+    """Scrape LinkedIn job listings with multiple search queries"""
     
     def scrape(self) -> List[Dict]:
-        """Fetch LinkedIn internship positions in Mexico"""
+        """Fetch LinkedIn jobs using multiple search queries for variety"""
         jobs = []
+        
+        # Multiple search queries to get variety
+        search_queries = [
+            'internship mexico',
+            'cybersecurity mexico',
+            'network engineer mexico',
+            'security analyst mexico',
+            'junior software engineer mexico',
+            'junior developer mexico',
+            'support engineer mexico',
+            'analyst mexico cdmx',
+            'infrastructure mexico',
+            'devops mexico'
+        ]
+        
         try:
-            url = "https://www.linkedin.com/jobs/search/"
-            params = {
-                'keywords': 'internship AND (mexico OR CDMX)',
-                'location': 'Mexico',
-                'sort': 'date'
-            }
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
             
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            job_cards = soup.find_all('div', class_='base-search-card')
-            
-            for card in job_cards[:20]:
+            for query in search_queries:
                 try:
-                    title_elem = card.find('h3', class_='base-search-card__title')
-                    title = title_elem.get_text(strip=True) if title_elem else ''
+                    url = "https://www.linkedin.com/jobs/search/"
+                    params = {'keywords': query, 'location': 'Mexico', 'sort': 'date'}
+                    response = requests.get(url, params=params, headers=headers, timeout=10)
+                    response.raise_for_status()
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    job_cards = soup.find_all('div', class_='base-search-card')
                     
-                    company_elem = card.find('h4', class_='base-search-card__subtitle')
-                    company = company_elem.get_text(strip=True) if company_elem else ''
+                    logger.info(f"LinkedIn search '{query}' found {len(job_cards)} results")
                     
-                    link = card.find('a', class_='base-card__full-link')
-                    job_url = link.get('href', '') if link else ''
-                    
-                    location_elem = card.find('span', class_='base-search-card__location')
-                    location = location_elem.get_text(strip=True) if location_elem else 'Mexico'
-                    
-                    if title and job_url:
-                        jobs.append({
-                            'title': title,
-                            'company': company,
-                            'url': job_url,
-                            'location': location,
-                            'type': 'Internship',
-                            'posted_date': '',
-                            'description': '',
-                            'source': 'LinkedIn'
-                        })
+                    for card in job_cards[:15]:  # 15 per search = more variety
+                        try:
+                            title_elem = card.find('h3', class_='base-search-card__title')
+                            title = title_elem.get_text(strip=True) if title_elem else ''
+                            company_elem = card.find('h4', class_='base-search-card__subtitle')
+                            company = company_elem.get_text(strip=True) if company_elem else ''
+                            link = card.find('a', class_='base-card__full-link')
+                            job_url = link.get('href', '') if link else ''
+                            location_elem = card.find('span', class_='base-search-card__location')
+                            location = location_elem.get_text(strip=True) if location_elem else 'Mexico'
+                            
+                            if title and job_url:
+                                jobs.append({
+                                    'title': title,
+                                    'company': company,
+                                    'url': job_url,
+                                    'location': location,
+                                    'type': 'Internship/Entry-level',
+                                    'posted_date': '',
+                                    'description': '',
+                                    'source': 'LinkedIn'
+                                })
+                        except Exception as e:
+                            logger.debug(f"Error parsing LinkedIn job: {e}")
+                            continue
+                
                 except Exception as e:
-                    logger.debug(f"Error parsing LinkedIn job: {e}")
+                    logger.error(f"LinkedIn search '{query}' error: {e}")
                     continue
             
-            logger.info(f"LinkedIn scraper found {len(jobs)} jobs")
+            logger.info(f"LinkedIn scraper found {len(jobs)} total jobs")
         except Exception as e:
             logger.error(f"LinkedIn scraper error: {e}")
-        
-        return jobs
-
-
-class ComputrabajoScraper:
-    """Scrape Computrabajo.com.mx for tech jobs"""
-    
-    def scrape(self) -> List[Dict]:
-        """Fetch Computrabajo tech internships in Mexico"""
-        jobs = []
-        try:
-            url = "https://www.computrabajo.com.mx/search/empleos"
-            params = {
-                'q': 'becario OR intern',
-                'l': 'Mexico City'
-            }
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            job_cards = soup.find_all('div', class_='search-result-item')
-            
-            for card in job_cards[:20]:
-                try:
-                    title_elem = card.find('h2', class_='job-title')
-                    title = title_elem.get_text(strip=True) if title_elem else ''
-                    
-                    company_elem = card.find('span', class_='company-name')
-                    company = company_elem.get_text(strip=True) if company_elem else ''
-                    
-                    link = card.find('a', class_='job-link')
-                    job_url = link.get('href', '') if link else ''
-                    if job_url and not job_url.startswith('http'):
-                        job_url = 'https://www.computrabajo.com.mx' + job_url
-                    
-                    location = 'Mexico City'
-                    
-                    if title and job_url:
-                        jobs.append({
-                            'title': title,
-                            'company': company,
-                            'url': job_url,
-                            'location': location,
-                            'type': 'Becario',
-                            'posted_date': '',
-                            'description': '',
-                            'source': 'Computrabajo.com.mx'
-                        })
-                except Exception as e:
-                    logger.debug(f"Error parsing Computrabajo job: {e}")
-                    continue
-            
-            logger.info(f"Computrabajo scraper found {len(jobs)} jobs")
-        except Exception as e:
-            logger.error(f"Computrabajo scraper error: {e}")
-        
-        return jobs
-
-
-class HirelineScraper:
-    """Scrape Hireline.io for startup jobs"""
-    
-    def scrape(self) -> List[Dict]:
-        """Fetch Hireline internship positions"""
-        jobs = []
-        try:
-            url = "https://hireline.io/jobs"
-            params = {
-                'search': 'intern OR becario',
-                'location': 'Mexico'
-            }
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            job_cards = soup.find_all('div', class_='job-card')
-            
-            for card in job_cards[:20]:
-                try:
-                    title_elem = card.find('h3')
-                    title = title_elem.get_text(strip=True) if title_elem else ''
-                    
-                    company_elem = card.find('p', class_='company')
-                    company = company_elem.get_text(strip=True) if company_elem else ''
-                    
-                    link = card.find('a')
-                    job_url = link.get('href', '') if link else ''
-                    if job_url and not job_url.startswith('http'):
-                        job_url = 'https://hireline.io' + job_url
-                    
-                    if title and job_url:
-                        jobs.append({
-                            'title': title,
-                            'company': company,
-                            'url': job_url,
-                            'location': 'Mexico',
-                            'type': 'Internship',
-                            'posted_date': '',
-                            'description': '',
-                            'source': 'Hireline.io'
-                        })
-                except Exception as e:
-                    logger.debug(f"Error parsing Hireline job: {e}")
-                    continue
-            
-            logger.info(f"Hireline scraper found {len(jobs)} jobs")
-        except Exception as e:
-            logger.error(f"Hireline scraper error: {e}")
         
         return jobs
 
@@ -438,54 +213,47 @@ class JobAggregator:
     """Aggregate jobs from multiple sources"""
     
     def __init__(self):
-        self.scrapers = [
-            OCCMexicoScraper(),
-            IndeedScraper(),
-            LinkedInScraper(),
-            ComputrabajoScraper(),
-            HirelineScraper()
-        ]
+        self.scrapers = [LinkedInScraper()]  # Only LinkedIn (works best)
         self.db = JobDatabase()
     
     def filter_jobs(self, jobs: List[Dict]) -> List[Dict]:
-        """Filter jobs for Brando Cervantes - Telematics Engineering Profile"""
+        """Filter jobs for Brando Cervantes - Telematics/Security/Network Profile"""
         
-        # Keywords for Telematics/Network/Security/Cloud/SOC
         tech_keywords = [
-            # Job types
-            'intern', 'becario', 'practicante', 'pasante', 'trainee',
+            # Security/Cybersecurity
+            'cybersecurity', 'security', 'seguridad', 'ciberseguridad',
+            'soc', 'threat', 'pentesting', 'vulnerability',
+            'information security', 'infosec', 'iam',
             
-            # Core telematics
-            'network', 'networking', 'redes', 'cybersecurity', 'security', 
-            'seguridad', 'cloud', 'aws', 'azure', 'gcp', 'soc', 'analyst',
-            'database', 'sql', 'postgres', 'devops', 'infrastructure',
+            # Network/Infrastructure
+            'network', 'networking', 'redes', 'cloud', 'aws', 'azure', 'gcp',
+            'devops', 'infrastructure', 'systems', 'linux', 'windows',
+            'docker', 'kubernetes',
             
-            # Companies of interest
-            'cisco', 'meraki', 'ericsson', 'dahua', 'hikvision', 'totalplay',
-            'at&t', 'axtel', 'genetec', 'ntt', 'ibm', 'oracle', 'huawei', 'zte',
+            # Database/Data
+            'database', 'sql', 'postgres', 'mysql', 'data',
             
-            # Engineering roles
-            'engineer', 'ingeniero', 'support', 'soporte', 'specialist',
-            'especialista', 'técnico', 'admin', 'administrator', 'system',
-            
-            # Development
+            # Software Development
             'software', 'developer', 'programador', 'backend', 'frontend',
-            'python', 'java', 'c++', 'go', 'rust',
+            'python', 'java', 'c++', 'go', 'rust', 'api', 'rest',
             
-            # Tech skills
-            'linux', 'windows', 'wireshark', 'firewall', 'router', 'vpn',
-            'encryption', 'api', 'rest', 'docker', 'kubernetes', 'git'
+            # Job types (ALL LEVELS)
+            'intern', 'becario', 'practicante', 'analyst', 'analista',
+            'engineer', 'ingeniero', 'specialist', 'especialista',
+            'junior', 'entry', 'support', 'soporte', 'administrator',
+            
+            # Companies
+            'cisco', 'ericsson', 'dahua', 'hikvision', 'totalplay',
+            'at&t', 'ibm', 'oracle',
         ]
         
         locations = [
             'cdmx', 'mexico city', 'ciudad de méxico', 'miguel hidalgo',
-            'polanco', 'benito juarez', 'cuauhtemoc', 'anzures', 'granada',
-            'mexico'
+            'polanco', 'benito juarez', 'cuauhtemoc', 'mexico'
         ]
         
         exclude_keywords = [
-            'sales', 'ventas', 'marketing', 'hr', 'rrhh',
-            'legal', 'abogado', 'contador'
+            'sales', 'ventas', 'marketing', 'hr', 'rrhh', 'legal', 'abogado'
         ]
         
         filtered = []
@@ -496,7 +264,7 @@ class JobAggregator:
             description = job.get('description', '').lower()
             full_text = f"{title} {company} {description}"
             
-            # Check location match
+            # CDMX is REQUIRED
             has_location = any(loc in location for loc in locations)
             if not has_location:
                 continue
@@ -505,7 +273,7 @@ class JobAggregator:
             if any(excl in full_text for excl in exclude_keywords):
                 continue
             
-            # Check for tech keywords (at least one match)
+            # Must have at least one tech keyword
             has_tech = any(kw in full_text for kw in tech_keywords)
             
             if has_tech:
@@ -518,6 +286,8 @@ class JobAggregator:
         all_jobs = []
         new_jobs = []
         
+        logger.info("📡 Starting job scrape with multiple LinkedIn queries...")
+        
         for scraper in self.scrapers:
             logger.info(f"Running {scraper.__class__.__name__}...")
             try:
@@ -526,16 +296,25 @@ class JobAggregator:
             except Exception as e:
                 logger.error(f"Error in {scraper.__class__.__name__}: {e}")
         
-        # Filter and deduplicate
-        filtered_jobs = self.filter_jobs(all_jobs)
+        logger.info(f"📊 Raw jobs found: {len(all_jobs)}")
         
+        # Filter
+        filtered_jobs = self.filter_jobs(all_jobs)
+        logger.info(f"📊 After filtering: {len(filtered_jobs)}")
+        
+        # Deduplicate and add to DB
         for job in filtered_jobs:
             if not self.db.job_exists(job['url']):
                 if self.db.add_job(job):
                     new_jobs.append(job)
         
-        logger.info(f"Total jobs found: {len(all_jobs)} | Filtered: {len(filtered_jobs)} | New: {len(new_jobs)}")
-        return self.db.get_new_jobs()
+        logger.info(f"✅ New jobs: {len(new_jobs)}")
+        
+        # Get DB stats
+        stats = self.db.get_stats()
+        logger.info(f"📈 DB Stats - Total: {stats['total']} | Notified: {stats['notified']} | Pending: {stats['pending']}")
+        
+        return self.db.get_new_jobs(limit=20)
 
 
 if __name__ == "__main__":
@@ -543,7 +322,7 @@ if __name__ == "__main__":
     new_jobs = aggregator.scrape_all()
     
     print(f"\n{'='*60}")
-    print(f"Found {len(new_jobs)} new job(s)")
+    print(f"Found {len(new_jobs)} new job(s) to notify")
     print(f"{'='*60}\n")
     
     for job in new_jobs:
